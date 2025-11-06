@@ -12,7 +12,7 @@ class VisaRequestPermission(permissions.BasePermission):
     
     def has_permission(self, request, view):
         # Allow create and list for everyone
-        if request.action in ['create', 'list']:
+        if view.action in ['create', 'list']:
             return True
         # For other actions, require authentication
         return request.user and request.user.is_authenticated
@@ -24,19 +24,30 @@ class VisaRequestPermission(permissions.BasePermission):
         - Travelers can only view their own visa requests
         - Agencies can view all (for managing requests)
         """
+        # Handle unauthenticated users
+        if not request.user.is_authenticated:
+            return False
+        
+        # Check if user has required methods (for CustomUser model)
+        if not hasattr(request.user, 'is_admin'):
+            return False
+        
         # Admins can do anything
         if request.user.is_admin():
             return True
         
         # Agencies can view all visa requests
-        if request.user.is_agency():
+        if hasattr(request.user, 'is_agency') and request.user.is_agency():
             return True
         
         # For travelers, check if this is their own request
-        # Note: VisaRequest doesn't have a user field, so we'll need to add it
-        # For now, allow travelers to view all (they can filter by their own data)
-        if request.user.is_traveler():
+        # If obj has a user field, check ownership
+        if hasattr(obj, 'user') and obj.user == request.user:
             return True
+        
+        # For travelers, allow view if no user field (legacy support)
+        if hasattr(request.user, 'is_traveler') and request.user.is_traveler():
+            return view.action in ['list', 'retrieve']  # Only allow read operations
         
         return False
 
