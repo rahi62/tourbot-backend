@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: tourbot-backend
+    env: python
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: gunicorn tourbot_backend.wsgi:application --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: False
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tourbot-db
+          property: connectionString
+      - key: ALLOWED_HOSTS
+        value: tourbot-backend.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://your-frontend-domain.vercel.app
+      - key: OPENAI_API_KEY
+        sync: false
+    healthCheckPath: /api/
+
+databases:
+  - name: tourbot-db
+    databaseName: tourbot_db
+    user: tourbot_user
+    plan: free
+
