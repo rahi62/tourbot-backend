@@ -30,7 +30,7 @@ from .serializers import (
     ReferralSerializer,
     UserPreferenceSerializer,
 )
-from .services import get_ai_response
+from .services import generate_chatbot_reply
 from apps.tour.models import Tour
 from apps.tour.serializers import TourSerializer
 
@@ -80,7 +80,8 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
         ]
         
         # Get AI response
-        ai_response = get_ai_response(user_message, conversation_history)
+        ai_payload = generate_chatbot_reply(user_message, conversation_history)
+        ai_response = ai_payload.get("reply", "")
         
         # Create the message with AI response
         message = ChatMessage.objects.create(
@@ -89,8 +90,36 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
             response=ai_response
         )
         
+        intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
+        if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
+            intent_value = ChatInteraction.INTENT_UNKNOWN
+
+        ChatInteraction.objects.create(
+            user=request.user,
+            intent=intent_value,
+            raw_query=user_message,
+            extracted_data={
+                "required_user_info": ai_payload.get("required_user_info"),
+                "suggested_tours": ai_payload.get("suggested_tours"),
+                "needs_followup": ai_payload.get("needs_followup"),
+                "followup_question": ai_payload.get("followup_question"),
+                "lead_type": ai_payload.get("lead_type"),
+            },
+        )
+
         response_serializer = ChatMessageSerializer(message)
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        return Response(
+            {
+                **response_serializer.data,
+                "intent": intent_value,
+                "needs_followup": ai_payload.get("needs_followup", False),
+                "followup_question": ai_payload.get("followup_question"),
+                "suggested_tours": ai_payload.get("suggested_tours", []),
+                "required_user_info": ai_payload.get("required_user_info", []),
+                "lead_type": ai_payload.get("lead_type"),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=False, methods=['get'])
     def my_messages(self, request):
@@ -127,7 +156,8 @@ def chat_endpoint(request):
     ]
     
     # Get AI response
-    ai_response = get_ai_response(message, conversation_history)
+    ai_payload = generate_chatbot_reply(message, conversation_history)
+    ai_response = ai_payload.get("reply", "")
     
     # Save the conversation
     chat_message = ChatMessage.objects.create(
@@ -136,10 +166,34 @@ def chat_endpoint(request):
         response=ai_response
     )
     
+    intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
+    if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
+        intent_value = ChatInteraction.INTENT_UNKNOWN
+
+    if request.user.is_authenticated:
+        ChatInteraction.objects.create(
+            user=request.user,
+            intent=intent_value,
+            raw_query=message,
+            extracted_data={
+                "required_user_info": ai_payload.get("required_user_info"),
+                "suggested_tours": ai_payload.get("suggested_tours"),
+                "needs_followup": ai_payload.get("needs_followup"),
+                "followup_question": ai_payload.get("followup_question"),
+                "lead_type": ai_payload.get("lead_type"),
+            },
+        )
+
     return Response({
         'message': chat_message.message,
         'response': chat_message.response,
         'created_at': chat_message.created_at,
+        'intent': intent_value,
+        'needs_followup': ai_payload.get("needs_followup", False),
+        'followup_question': ai_payload.get("followup_question"),
+        'suggested_tours': ai_payload.get("suggested_tours", []),
+        'required_user_info': ai_payload.get("required_user_info", []),
+        'lead_type': ai_payload.get("lead_type"),
     }, status=status.HTTP_200_OK)
 
 
@@ -175,7 +229,8 @@ def public_chat_endpoint(request):
             ]
         
         # Get AI response
-        ai_reply = get_ai_response(message, conversation_history if conversation_history else None)
+        ai_payload = generate_chatbot_reply(message, conversation_history if conversation_history else None)
+        ai_reply = ai_payload.get("reply", "")
         
         # Save the conversation if user is authenticated
         if request.user.is_authenticated:
@@ -185,8 +240,32 @@ def public_chat_endpoint(request):
                 response=ai_reply
             )
         
+        intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
+        if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
+            intent_value = ChatInteraction.INTENT_UNKNOWN
+
+        if request.user.is_authenticated:
+            ChatInteraction.objects.create(
+                user=request.user,
+                intent=intent_value,
+                raw_query=message,
+                extracted_data={
+                    "required_user_info": ai_payload.get("required_user_info"),
+                    "suggested_tours": ai_payload.get("suggested_tours"),
+                    "needs_followup": ai_payload.get("needs_followup"),
+                    "followup_question": ai_payload.get("followup_question"),
+                    "lead_type": ai_payload.get("lead_type"),
+                },
+            )
+
         return Response({
-            'reply': ai_reply
+            'reply': ai_reply,
+            'intent': intent_value,
+            'needs_followup': ai_payload.get("needs_followup", False),
+            'followup_question': ai_payload.get("followup_question"),
+            'suggested_tours': ai_payload.get("suggested_tours", []),
+            'required_user_info': ai_payload.get("required_user_info", []),
+            'lead_type': ai_payload.get("lead_type"),
         }, status=status.HTTP_200_OK)
         
     except Exception as e:
