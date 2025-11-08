@@ -8,6 +8,7 @@ from .models import (
     Offer,
     Referral,
     UserPreference,
+    VisaKnowledge,
 )
 
 
@@ -66,4 +67,12 @@ class UserPreferenceAdmin(admin.ModelAdmin):
     search_fields = ('phone', 'user__username')
     list_filter = ('travel_style',)
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(VisaKnowledge)
+class VisaKnowledgeAdmin(admin.ModelAdmin):
+    list_display = ('country', 'visa_type', 'processing_time', 'is_active', 'last_updated')
+    list_filter = ('is_active', 'country', 'visa_type')
+    search_fields = ('country', 'visa_type', 'summary', 'notes')
+    readonly_fields = ('last_updated',)
 
