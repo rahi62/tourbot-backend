@@ -66,13 +66,37 @@ if DEBUG:
         #     }
         # }
     
-    # CORS - Allow localhost in development
+    # CORS - Allow localhost and mobile devices in development
+    # For mobile testing, you can use your computer's IP address
+    # Example: http://192.168.1.100:3000 (replace with your actual IP)
     CORS_ALLOWED_ORIGINS = [
         'http://localhost:3000',
         'http://127.0.0.1:3000',
         'http://localhost:3001',
         'http://127.0.0.1:3001',
     ]
+    
+    # Allow all origins in development for easier mobile testing
+    # Set CORS_ALLOW_ALL_ORIGINS=True in .env to enable this
+    # WARNING: Only use in development, never in production!
+    if config('CORS_ALLOW_ALL_ORIGINS', default=False, cast=bool):
+        CORS_ALLOW_ALL_ORIGINS = True
+    else:
+        # Get IP address for mobile access on same network
+        import socket
+        try:
+            # Get local IP address
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            # Add IP-based origins for mobile access
+            CORS_ALLOWED_ORIGINS.extend([
+                f'http://{local_ip}:3000',
+                f'http://{local_ip}:3001',
+            ])
+        except Exception:
+            pass  # If can't get IP, just use localhost origins
     
     # Logging - Verbose logging for development
     LOGGING = {

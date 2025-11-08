@@ -40,18 +40,18 @@ class VisaRequestViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, viewset
     def get_queryset(self):
         queryset = VisaRequest.objects.all()
         
-        # Admins can see all visa requests
-        if self.request.user.is_authenticated and self.request.user.is_admin():
-            pass  # Return all requests
-        # Agencies can see all visa requests (for managing)
-        elif self.request.user.is_authenticated and self.request.user.is_agency():
-            pass  # Return all requests
-        # Travelers can only see their own visa requests
-        elif self.request.user.is_authenticated and self.request.user.is_traveler():
-            queryset = queryset.filter(user=self.request.user)
+        # Handle authenticated users
+        if self.request.user.is_authenticated:
+            # Admins can see all visa requests
+            if hasattr(self.request.user, 'is_admin') and self.request.user.is_admin():
+                pass  # Return all requests
+            # Agencies can see all visa requests (for managing)
+            elif hasattr(self.request.user, 'is_agency') and self.request.user.is_agency():
+                pass  # Return all requests
+            # Travelers can only see their own visa requests
+            elif hasattr(self.request.user, 'is_traveler') and self.request.user.is_traveler():
+                queryset = queryset.filter(user=self.request.user)
         # Unauthenticated users can see all (but can't create authenticated requests)
-        else:
-            pass  # Return all requests
         
         # Filter by status if requested
         status_filter = self.request.query_params.get('status')

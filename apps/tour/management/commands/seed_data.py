@@ -188,34 +188,35 @@ class Command(BaseCommand):
         ]
 
         for traveler in traveler_users:
-            # Check if traveler already has visa requests
-            existing_requests = VisaRequest.objects.filter(user=traveler).count()
-            if existing_requests >= len(destinations):
-                self.stdout.write(self.style.WARNING(f'Visa requests for {traveler.username} already exist. Skipping...'))
-                continue
-
             for i, dest in enumerate(destinations):
-                # Check if this specific request already exists
-                if VisaRequest.objects.filter(
-                    user=traveler,
-                    destination_country=dest['country']
-                ).exists():
-                    continue
-
+                # Create unique passport number for each request
+                passport_number = f"P{traveler.id:06d}{i+1}"
+                full_name = f"{traveler.first_name} {traveler.last_name}"
                 travel_date = timezone.now().date() + timedelta(days=60 + (i * 15))
-
-                VisaRequest.objects.create(
+                
+                # Use get_or_create for idempotency - check by user, destination, and passport
+                visa_request, created = VisaRequest.objects.get_or_create(
                     user=traveler,
-                    full_name=f"{traveler.first_name} {traveler.last_name}",
-                    passport_number=f"P{traveler.id:06d}",
-                    nationality='United States',
+                    passport_number=passport_number,
                     destination_country=dest['country'],
-                    travel_date=travel_date,
-                    status=dest['status'],
+                    defaults={
+                        'full_name': full_name,
+                        'nationality': 'United States',
+                        'travel_date': travel_date,
+                        'status': dest['status'],
+                    }
                 )
-                self.stdout.write(
-                    self.style.SUCCESS(
-                        f'Created visa request for {traveler.username}: {dest["country"]} ({dest["status"]})'
+                
+                if created:
+                    self.stdout.write(
+                        self.style.SUCCESS(
+                            f'Created visa request for {traveler.username}: {dest["country"]} ({dest["status"]})'
+                        )
                     )
-                )
+                else:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f'Visa request for {traveler.username}: {dest["country"]} already exists. Skipping...'
+                        )
+                    )
 
