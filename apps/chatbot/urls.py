@@ -8,6 +8,7 @@ from .views import (
     ChatMessageViewSet,
     TourSuggestionView,
     UserPreferenceView,
+    VisaKnowledgeView,
     public_chat_endpoint,
 )
 
@@ -20,6 +21,7 @@ urlpatterns = [
     path('analytics/summary/', ChatAnalyticsSummaryView.as_view(), name='chat-analytics-summary'),
     path('preferences/', UserPreferenceView.as_view(), name='chat-preferences'),
     path('tour-suggestions/', TourSuggestionView.as_view(), name='chat-tour-suggestions'),
+    path('visa-knowledge/', VisaKnowledgeView.as_view(), name='chat-visa-knowledge'),
     path('', include(router.urls)),  # /api/chat/... endpoints
 ]
 

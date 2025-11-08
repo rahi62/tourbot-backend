@@ -242,3 +242,22 @@ class UserPreference(models.Model):
     def has_budget_range(self) -> bool:
         return self.budget_min is not None or self.budget_max is not None
 
+
+class VisaKnowledge(models.Model):
+    country = models.CharField(max_length=120)
+    visa_type = models.CharField(max_length=120, blank=True)
+    summary = models.TextField(blank=True)
+    requirements = models.JSONField(blank=True, null=True)
+    processing_time = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    source_url = models.URLField(blank=True)
+    is_active = models.BooleanField(default=True)
+    last_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['country', 'visa_type']
+        unique_together = ('country', 'visa_type')
+
+    def __str__(self) -> str:
+        visa_label = self.visa_type or 'عمومی'
+        return f'{self.country} - {visa_label}'

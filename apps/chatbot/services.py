@@ -9,6 +9,8 @@ from openai import OpenAI
 
 from apps.tour.models import Tour
 
+from .models import VisaKnowledge
+
 # Initialize OpenAI client (lazy initialization)
 def get_openai_client():
     api_key = getattr(settings, 'OPENAI_API_KEY', None)
@@ -132,12 +134,39 @@ def fetch_relevant_tours(user_message: str, limit: int = 3) -> List[Tour]:
     return tours
 
 
+def _serialize_visa_knowledge(entry: VisaKnowledge) -> Dict[str, Any]:
+    return {
+        "country": entry.country,
+        "visa_type": entry.visa_type or "",
+        "summary": entry.summary,
+        "requirements": entry.requirements or [],
+        "processing_time": entry.processing_time,
+        "notes": entry.notes,
+        "source_url": entry.source_url,
+        "last_updated": entry.last_updated.isoformat(),
+    }
+
+
+def fetch_visa_knowledge(user_message: str, limit: int = 3) -> List[Dict[str, Any]]:
+    keywords = _extract_keywords(user_message)
+    queryset = VisaKnowledge.objects.filter(is_active=True)
+    if keywords:
+        query = Q()
+        for keyword in keywords:
+            query |= Q(country__icontains=keyword)
+            query |= Q(visa_type__icontains=keyword)
+        queryset = queryset.filter(query)
+    queryset = queryset.order_by('-last_updated', 'country', 'visa_type')[:limit]
+    return [_serialize_visa_knowledge(entry) for entry in queryset]
+
+
 def _build_messages(
     user_message: str,
     conversation_history: Optional[List[Dict[str, str]]] = None,
-) -> Tuple[List[Dict[str, str]], List[Dict[str, Any]]]:
+) -> Tuple[List[Dict[str, str]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     tours = fetch_relevant_tours(user_message)
     tours_payload = [_serialize_tour_for_model(tour) for tour in tours]
+    visa_knowledge_payload = fetch_visa_knowledge(user_message)
 
     messages: List[Dict[str, str]] = [
         {"role": "system", "content": BUSINESS_PROFILE_CONTEXT.strip()},
@@ -146,8 +175,15 @@ def _build_messages(
             "role": "system",
             "content": f"AVAILABLE_TOURS_JSON={json.dumps(tours_payload, ensure_ascii=False)}",
         },
-        {"role": "system", "content": STRUCTURED_RESPONSE_INSTRUCTIONS.strip()},
     ]
+    if visa_knowledge_payload:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"AVAILABLE_VISA_KNOWLEDGE_JSON={json.dumps(visa_knowledge_payload, ensure_ascii=False)}",
+            }
+        )
+    messages.append({"role": "system", "content": STRUCTURED_RESPONSE_INSTRUCTIONS.strip()})
 
     if conversation_history:
         for msg in conversation_history[-10:]:
@@ -159,7 +195,7 @@ def _build_messages(
                 messages.append({"role": "assistant", "content": bot_text})
 
     messages.append({"role": "user", "content": user_message})
-    return messages, tours_payload
+    return messages, tours_payload, visa_knowledge_payload
 
 
 def generate_chatbot_reply(
@@ -167,7 +203,7 @@ def generate_chatbot_reply(
     conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     try:
-        messages, tours_payload = _build_messages(user_message, conversation_history)
+        messages, tours_payload, visa_knowledge_payload = _build_messages(user_message, conversation_history)
         client = get_openai_client()
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -190,6 +226,7 @@ def generate_chatbot_reply(
             "suggested_tours": [],
             "required_user_info": [],
             "lead_type": None,
+            "knowledge": [],
         }
 
     intent = (data.get("intent") or "unknown").lower()
@@ -223,6 +260,7 @@ def generate_chatbot_reply(
         "suggested_tours": suggested_tours_for_client,
         "required_user_info": data.get("required_user_info") or [],
         "lead_type": data.get("lead_type"),
+        "knowledge": visa_knowledge_payload,
     }
 
 

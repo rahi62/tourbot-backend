@@ -15,6 +15,7 @@ from .models import (
     Offer,
     Referral,
     UserPreference,
+    VisaKnowledge,
 )
 from .serializers import (
     ChatInteractionSerializer,
@@ -29,6 +30,7 @@ from .serializers import (
     ReferralCreateSerializer,
     ReferralSerializer,
     UserPreferenceSerializer,
+    VisaKnowledgeSerializer,
 )
 from .services import generate_chatbot_reply
 from apps.tour.models import Tour
@@ -104,6 +106,7 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
                 "needs_followup": ai_payload.get("needs_followup"),
                 "followup_question": ai_payload.get("followup_question"),
                 "lead_type": ai_payload.get("lead_type"),
+                "knowledge": ai_payload.get("knowledge"),
             },
         )
 
@@ -117,6 +120,7 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
                 "suggested_tours": ai_payload.get("suggested_tours", []),
                 "required_user_info": ai_payload.get("required_user_info", []),
                 "lead_type": ai_payload.get("lead_type"),
+                "knowledge": ai_payload.get("knowledge", []),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -181,6 +185,7 @@ def chat_endpoint(request):
                 "needs_followup": ai_payload.get("needs_followup"),
                 "followup_question": ai_payload.get("followup_question"),
                 "lead_type": ai_payload.get("lead_type"),
+                "knowledge": ai_payload.get("knowledge"),
             },
         )
 
@@ -194,6 +199,7 @@ def chat_endpoint(request):
         'suggested_tours': ai_payload.get("suggested_tours", []),
         'required_user_info': ai_payload.get("required_user_info", []),
         'lead_type': ai_payload.get("lead_type"),
+        'knowledge': ai_payload.get("knowledge", []),
     }, status=status.HTTP_200_OK)
 
 
@@ -255,6 +261,7 @@ def public_chat_endpoint(request):
                     "needs_followup": ai_payload.get("needs_followup"),
                     "followup_question": ai_payload.get("followup_question"),
                     "lead_type": ai_payload.get("lead_type"),
+                    "knowledge": ai_payload.get("knowledge"),
                 },
             )
 
@@ -266,6 +273,7 @@ def public_chat_endpoint(request):
             'suggested_tours': ai_payload.get("suggested_tours", []),
             'required_user_info': ai_payload.get("required_user_info", []),
             'lead_type': ai_payload.get("lead_type"),
+            'knowledge': ai_payload.get("knowledge", []),
         }, status=status.HTTP_200_OK)
         
     except Exception as e:
@@ -466,6 +474,34 @@ class UserPreferenceView(APIView):
         if not preference and phone:
             preference = UserPreference.objects.filter(phone=phone).first()
         return preference
+
+
+class VisaKnowledgeView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        country = (request.query_params.get('country') or '').strip()
+        visa_type = (request.query_params.get('visa_type') or '').strip()
+        try:
+            limit = int(request.query_params.get('limit', 5))
+        except (TypeError, ValueError):
+            limit = 5
+        limit = max(1, min(limit, 20))
+
+        queryset = VisaKnowledge.objects.filter(is_active=True)
+        if country:
+            queryset = queryset.filter(country__icontains=country)
+        if visa_type:
+            queryset = queryset.filter(visa_type__icontains=visa_type)
+
+        queryset = queryset.order_by('-last_updated', 'country', 'visa_type')[:limit]
+        serializer = VisaKnowledgeSerializer(queryset, many=True)
+        return Response(
+            {
+                'results': serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class TourSuggestionView(APIView):

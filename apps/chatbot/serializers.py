@@ -10,6 +10,7 @@ from .models import (
     Offer,
     Referral,
     UserPreference,
+    VisaKnowledge,
 )
 from apps.tour.constants import TRAVEL_STYLE_CHOICES
 
@@ -200,6 +201,24 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
             # ensure we store empty list rather than None
             validated_data['favorite_destinations'] = []
         return super().update(instance, validated_data)
+
+
+class VisaKnowledgeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VisaKnowledge
+        fields = (
+            'id',
+            'country',
+            'visa_type',
+            'summary',
+            'requirements',
+            'processing_time',
+            'notes',
+            'source_url',
+            'is_active',
+            'last_updated',
+        )
+        read_only_fields = ('id', 'last_updated')
 
 
 class TourSuggestionRequestSerializer(serializers.Serializer):
