@@ -1,12 +1,11 @@
-import os
 from openai import OpenAI
 from django.conf import settings
 
 # Initialize OpenAI client (lazy initialization)
 def get_openai_client():
-    api_key = os.getenv('OPENAI_API_KEY')
+    api_key = getattr(settings, 'OPENAI_API_KEY', None)
     if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is not set")
+        raise ValueError("OPENAI_API_KEY environment variable is not set in Django settings")
     return OpenAI(api_key=api_key)
 
 # Travel assistant system prompt

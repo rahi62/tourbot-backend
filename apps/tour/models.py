@@ -1,5 +1,7 @@
-from django.db import models
 from django.contrib.auth import get_user_model
+from django.db import models
+
+from .constants import TRAVEL_STYLE_CHOICES
 
 User = get_user_model()
 
@@ -13,6 +15,7 @@ class Tour(models.Model):
     price = models.DecimalField(max_digits=10, decimal_places=2)
     max_participants = models.IntegerField(default=20)
     is_active = models.BooleanField(default=True)
+    travel_style = models.CharField(max_length=20, choices=TRAVEL_STYLE_CHOICES, default='general')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

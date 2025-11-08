@@ -12,6 +12,13 @@ from rest_framework_simplejwt.views import (
     TokenVerifyView,
 )
 from apps.accounts.views import CustomTokenObtainPairView
+from apps.chatbot.views import (
+    InteractionViewSet as OfferInteractionViewSet,
+    OfferViewSet,
+    PaymentCreateView,
+    PaymentWebhookView,
+    ReferralCreateView,
+)
 from apps.tour.views import TourPackageViewSet
 from apps.visa.views import VisaRequestViewSet
 
@@ -19,6 +26,8 @@ from apps.visa.views import VisaRequestViewSet
 router = DefaultRouter()
 router.register(r'tours', TourPackageViewSet, basename='tour-package')
 router.register(r'visa-requests', VisaRequestViewSet, basename='visa-request')
+router.register(r'offers', OfferViewSet, basename='offer')
+router.register(r'interactions', OfferInteractionViewSet, basename='offer-interaction')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -30,6 +39,10 @@ urlpatterns = [
     path('api/auth/', include('apps.accounts.urls')),
     # Chat endpoint
     path('api/chat/', include('apps.chatbot.urls')),
+    # Referrals & payments
+    path('api/referrals/', ReferralCreateView.as_view(), name='referral-create'),
+    path('api/payments/create/', PaymentCreateView.as_view(), name='payment-create'),
+    path('api/payments/webhook/', PaymentWebhookView.as_view(), name='payment-webhook'),
     # API routes
     path('api/', include(router.urls)),
 ]
