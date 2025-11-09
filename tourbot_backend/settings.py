@@ -71,6 +71,7 @@ if DEBUG:
     # Example: http://192.168.1.100:3000 (replace with your actual IP)
     CORS_ALLOWED_ORIGINS = [
         'http://localhost:3000',
+        'http://192.168.1.100:3000',
         'http://127.0.0.1:3000',
         'http://localhost:3001',
         'http://127.0.0.1:3001',
