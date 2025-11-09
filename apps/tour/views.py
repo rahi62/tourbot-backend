@@ -85,7 +85,16 @@ class TourPackageViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(start_date__gte=date_obj)
             except (ValueError, TypeError):
                 pass  # Ignore invalid date format
-        
+
+        # Filter by featured or discounted flags
+        featured = self.request.query_params.get('is_featured')
+        if featured is not None:
+            queryset = queryset.filter(is_featured=featured.lower() in ('true', '1'))
+
+        discounted = self.request.query_params.get('is_discounted')
+        if discounted is not None:
+            queryset = queryset.filter(is_discounted=discounted.lower() in ('true', '1'))
+
         return queryset
     
     def perform_create(self, serializer):

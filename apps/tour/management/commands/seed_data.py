@@ -354,6 +354,12 @@ class Command(BaseCommand):
             start_date = timezone.now().date() + timedelta(days=20 + index * 3)
             end_date = start_date + timedelta(days=4)
 
+            is_featured = index % 5 in (0, 1)
+            is_discounted = index % 4 == 0
+            discount_percentage = None
+            if is_discounted:
+                discount_percentage = 10 + (index % 3) * 5
+
             TourPackage.objects.create(
                 user=agency,
                 title=f"{template['title']} - {agency.company_name or agency.username}",
@@ -363,6 +369,9 @@ class Command(BaseCommand):
                 end_date=end_date,
                 price=template["price"],
                 is_active=True,
+                is_featured=is_featured,
+                is_discounted=is_discounted,
+                discount_percentage=discount_percentage,
             )
 
         self.stdout.write(self.style.SUCCESS('Created 30 Persian tour packages.'))
