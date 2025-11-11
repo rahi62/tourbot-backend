@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import register, profile, update_profile, CustomTokenObtainPairView, me
+from .views import register, profile, update_profile, CustomTokenObtainPairView, me, top_agencies
 
 urlpatterns = [
     path('register/', register, name='register'),
@@ -7,5 +7,6 @@ urlpatterns = [
     path('profile/', profile, name='profile'),
     path('profile/update/', update_profile, name='update-profile'),
     path('me/', me, name='me'),  # Alias for profile endpoint
+    path('agencies/top/', top_agencies, name='top-agencies'),
 ]
 

@@ -57,6 +57,9 @@ class Command(BaseCommand):
                 'first_name': 'آژانس',
                 'last_name': 'تهران',
                 'company_name': 'آژانس سفر تهران',
+                'agency_tagline': 'تخصص در تورهای خرید استانبول و اروپای شرقی',
+                'is_featured_agency': True,
+                'featured_priority': 1,
             },
             {
                 'username': 'agency_iraniyan',
@@ -64,6 +67,9 @@ class Command(BaseCommand):
                 'first_name': 'آژانس',
                 'last_name': 'ایرانیان',
                 'company_name': 'ایرانیان گردشگری',
+                'agency_tagline': 'سفرهای خانوادگی و طبیعت‌گردی سراسر ایران',
+                'is_featured_agency': True,
+                'featured_priority': 2,
             },
             {
                 'username': 'agency_shomal',
@@ -71,6 +77,9 @@ class Command(BaseCommand):
                 'first_name': 'آژانس',
                 'last_name': 'شمال',
                 'company_name': 'سفرهای سرزمین شمال',
+                'agency_tagline': 'تورهای لوکس ساحلی و اقامتگاه‌های خاص شمال',
+                'is_featured_agency': True,
+                'featured_priority': 3,
             },
             {
                 'username': 'agency_parvaz',
@@ -78,24 +87,51 @@ class Command(BaseCommand):
                 'first_name': 'آژانس',
                 'last_name': 'پرواز',
                 'company_name': 'آسمان آبی پرواز',
+                'agency_tagline': 'پروازهای مستقیم و تورهای سفارشی خاورمیانه',
+                'is_featured_agency': False,
+                'featured_priority': 5,
             },
         ]
 
         for data in agency_data:
             username = data['username']
+            defaults = {
+                'email': data['email'],
+                'role': 'agency',
+                'first_name': data['first_name'],
+                'last_name': data['last_name'],
+                'company_name': data['company_name'],
+            }
             if User.objects.filter(username=username).exists():
-                self.stdout.write(self.style.WARNING(f'User "{username}" already exists. Skipping...'))
-                agencies.append(User.objects.get(username=username))
+                agency = User.objects.get(username=username)
+                updated = False
+                for field, value in defaults.items():
+                    if getattr(agency, field) != value:
+                        setattr(agency, field, value)
+                        updated = True
+                if agency.agency_tagline != data.get('agency_tagline', ''):
+                    agency.agency_tagline = data.get('agency_tagline', '')
+                    updated = True
+                if agency.is_featured_agency != data.get('is_featured_agency', False):
+                    agency.is_featured_agency = data.get('is_featured_agency', False)
+                    updated = True
+                if agency.featured_priority != data.get('featured_priority', 0):
+                    agency.featured_priority = data.get('featured_priority', 0)
+                    updated = True
+                if updated:
+                    agency.save()
+                self.stdout.write(self.style.WARNING(f'User "{username}" already exists. Updated attributes.'))
+                agencies.append(agency)
             else:
                 agency = User.objects.create_user(
                     username=username,
-                    email=data['email'],
                     password='agency123',
-                    role='agency',
-                    first_name=data['first_name'],
-                    last_name=data['last_name'],
-                    company_name=data['company_name'],
+                    **defaults,
                 )
+                agency.agency_tagline = data.get('agency_tagline', '')
+                agency.is_featured_agency = data.get('is_featured_agency', False)
+                agency.featured_priority = data.get('featured_priority', 0)
+                agency.save()
                 self.stdout.write(self.style.SUCCESS(f'Created agency user: {username}'))
                 agencies.append(agency)
 
