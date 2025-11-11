@@ -36,18 +36,18 @@ You are TourBot, an expert Persian-speaking travel consultant working within Tou
 Your responsibilities:
 1. Discover the traveller’s intent (تور یا ویزا) by actively chatting and asking smart follow-up questions.
 2. Translate vague needs into clear requirements (مقصد، بودجه، تاریخ، تعداد نفرات، هدف سفر).
-3. Recommend relevant tours or visa guidance using the data provided in AVAILABLE_TOURS_JSON.
-4. Encourage the traveller to continue the journey (submit lead form, تماس با کارشناس).
+3. Recommend relevant tours or visa guidance using the data provided in AVAILABLE_TOURS_JSON when—and only when—the intent is clearly tour-related.
+4. Encourage ادامه مکالمه، ثبت درخواست، یا هدایت کاربر به جریان خرید تور/ثبت درخواست ویزا داخل توربات.
 
 Behavioural guardrails:
 - Reply in Persian unless explicitly asked otherwise.
 - Mirror the user’s energy: گرم، حرفه‌ای، و پیگیر.
 - Ask one targeted follow-up whenever اطلاعات ناقص است.
-- Never fabricate prices or مدارک؛ اگر مطمئن نیستی، صادقانه بگو و پیشنهاد تماس با کارشناس بده.
-- When tours are available, highlight selling points (قیمت، مدت، تم). اگر تور مناسبی نیست، مسیر جایگزین بده.
-- برای ویزا: گام‌بندی، مدارک کلیدی، زمان تقریبی و هشدارهای مهم را بگو.
-- زمانی‌که آماده تبدیل است، CTA مودبانه برای ثبت درخواست یا تماس ارائه کن.
-- تولید خروجی دقیقا در قالب JSON درخواستی انجام شود.
+- Never fabricate prices یا مدارک؛ اگر مطمئن نیستی، صادقانه بگو و مسیر جایگزین ارائه کن.
+- برای ویزا: گام‌بندی، مدارک کلیدی، زمان تقریبی و CTA برای ثبت درخواست در توربات بده.
+- هیچ‌گاه کاربر را به «کارشناس» یا «پشتیبان انسانی» ارجاع نده؛ خودت مسئول پیشبرد فرایند هستی.
+- تنها زمانی پیشنهاد تور می‌دهی که intent="tour" باشد؛ در حالت‌های دیگر suggested_tours را خالی بگذار.
+- خروجی را دقیقاً طبق قالب JSON درخواستی تولید کن.
 """
 
 STRUCTURED_RESPONSE_INSTRUCTIONS = """
@@ -61,8 +61,8 @@ Produce a valid JSON object with these keys:
 - lead_type: "tour", "visa", or null depending on the most relevant sales path
 
 Rules:
-- If intent is "tour", prioritize the provided tours (if any) and explain why they match the request.
-- If intent is "visa", include a step-by-step outline (overview) and note if a specialist should follow up.
+- If intent is "tour", you MAY populate suggested_tours using AVAILABLE_TOURS_JSON (max 3 items). Otherwise leave suggested_tours=[] and ensure highlight strings are concise.
+- If intent is "visa", include یک برآورد مرحله‌ای و CTA برای ثبت درخواست ویزا در توربات.
 - If intent is "unknown", politely clarify what the user is looking for and set needs_followup=true.
 - suggested_tours must reference IDs from the supplied context. If none are relevant, return an empty array.
 - Do not add extra top-level keys.
@@ -156,6 +156,11 @@ def _build_rule_based_reply(
     tours = fetch_relevant_tours(user_message, limit=3)
     visa_knowledge_payload = fetch_visa_knowledge(user_message)
 
+    lowered = (user_message or "").lower()
+    is_visa_request = any(
+        keyword in lowered for keyword in ["visa", "ویز", "ویزا", "ویزا", "شنگن", "پاسپورت"]
+    )
+
     suggested_tours_for_client = []
     for tour in tours:
         suggested_tours_for_client.append(
@@ -165,7 +170,7 @@ def _build_rule_based_reply(
             }
         )
 
-    if suggested_tours_for_client:
+    if not is_visa_request and suggested_tours_for_client:
         reply_parts = [RULE_BASED_REPLY_INTRO]
         for idx, tour in enumerate(suggested_tours_for_client, start=1):
             reply_parts.append(
@@ -176,30 +181,32 @@ def _build_rule_based_reply(
         )
         reply_text = "\n".join(reply_parts)
         lead_type = "tour"
-    elif visa_knowledge_payload:
+    elif is_visa_request or visa_knowledge_payload:
+        summary_lines = []
+        if visa_knowledge_payload:
+            summary_lines.append("راهنمای سریع ویزا:")
+            for entry in visa_knowledge_payload:
+                summary_lines.append(
+                    f"- {entry['country']} ({entry.get('visa_type') or 'ویزای رایج'}): {entry['summary']}"
+                )
         reply_text = (
-            "برای درخواست ویزا، لطفاً این موارد را در نظر بگیرید:\n"
-            + "\n".join(
-                f"- {entry['country']} ({entry.get('visa_type') or 'ویزای متداول'}): {entry['summary']}"
-                for entry in visa_knowledge_payload
-            )
-            + "\nاگر مایل باشید می‌توانم درخواست پیگیری کارشناسان ما را ثبت کنم."
-        )
+            ("\n".join(summary_lines) + "\n") if summary_lines else ""
+        ) + "برای شروع روند، جزئیات سفر و تاریخ مد نظرت را بگو تا همین حالا درخواست ویزا را در توربات ثبت کنم."
         lead_type = "visa"
+        suggested_tours_for_client = []
     else:
         reply_text = (
-            "در حال حاضر داده دقیقی برای این پرسش ندارم، اما می‌توانم اطلاعات تماس شما را بگیرم "
-            "تا کارشناسان توربات با شما تماس بگیرند یا می‌توانید مقصد، تاریخ و بودجه تقریبی را اعلام کنید."
+            "در حال حاضر داده دقیقی برای این پرسش ندارم، اما اگر مقصد، تاریخ و بودجه تقریبی را بگویی، همان‌جا بهترین گزینه را پیشنهاد می‌دهم یا درخواستت را ثبت می‌کنم."
         )
         lead_type = None
 
     return {
-        "intent": "unknown",
+        "intent": "unknown" if not lead_type and not suggested_tours_for_client else ("tour" if suggested_tours_for_client else "visa" if lead_type == "visa" else "unknown"),
         "reply": reply_text,
         "needs_followup": True,
-        "followup_question": "مایل هستید درخواست شما را برای پیگیری کارشناسان ثبت کنم؟",
+        "followup_question": "مایل هستی همین الان ادامه بدهیم؟",
         "suggested_tours": suggested_tours_for_client,
-        "required_user_info": ["تاریخ سفر", "بودجه تقریبی", "تعداد مسافران"],
+        "required_user_info": ["مقصد", "تاریخ سفر", "بودجه تقریبی"],
         "lead_type": lead_type,
         "knowledge": visa_knowledge_payload,
     }
