@@ -159,6 +159,11 @@ else:
     ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='', cast=Csv())
     if not ALLOWED_HOSTS:
         raise ValueError('ALLOWED_HOSTS must be set in production!')
+
+    if isinstance(ALLOWED_HOSTS, tuple):
+        ALLOWED_HOSTS = list(ALLOWED_HOSTS)
+    if 'healthcheck.railway.app' not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append('healthcheck.railway.app')
     
     # Database - Must use DATABASE_URL in production
     DATABASE_URL = config('DATABASE_URL', default=None)
@@ -229,7 +234,7 @@ else:
     USE_WHITENOISE = True
     
     # Security settings for production
-    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=True, cast=bool)
+    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=False, cast=bool)
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SECURE_BROWSER_XSS_FILTER = True

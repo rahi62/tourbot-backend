@@ -5,6 +5,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import HttpResponse
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
@@ -29,7 +30,12 @@ router.register(r'visa-requests', VisaRequestViewSet, basename='visa-request')
 router.register(r'offers', OfferViewSet, basename='offer')
 router.register(r'interactions', OfferInteractionViewSet, basename='offer-interaction')
 
+
+def health_check(_request):
+    return HttpResponse("ok", status=200)
+
 urlpatterns = [
+    path('health/', health_check, name='health-check'),
     path('admin/', admin.site.urls),
     # JWT Token endpoints
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
