@@ -184,6 +184,20 @@ def _build_rule_based_reply(
     is_visa_request = any(
         keyword in lowered for keyword in ["visa", "ویز", "ویزا", "ویزا", "شنگن", "پاسپورت"]
     )
+    is_tour_request = any(
+        keyword in lowered
+        for keyword in [
+            "تور",
+            "سفر",
+            "travel",
+            "tour",
+            "بلیط",
+            "پرواز",
+            "flight",
+            "hotel",
+            "هتل",
+        ]
+    )
 
     suggested_tours_for_client = []
     for tour in tours:
@@ -218,6 +232,12 @@ def _build_rule_based_reply(
         ) + "برای شروع روند، جزئیات سفر و تاریخ مد نظرت را بگو تا همین حالا درخواست ویزا را در توربات ثبت کنم."
         lead_type = "visa"
         suggested_tours_for_client = []
+    elif is_tour_request:
+        reply_text = (
+            "برای پیشنهاد تور مناسب، لطفاً مقصد دقیق، تاریخ تقریبی، تعداد نفرات و بودجه حدودی خود را بگو تا بهترین گزینه‌ها را معرفی کنم یا درخواست رزرو را ثبت کنم."
+        )
+        lead_type = "tour"
+        suggested_tours_for_client = []
     else:
         reply_text = (
             "در حال حاضر داده دقیقی برای این پرسش ندارم، اما اگر مقصد، تاریخ و بودجه تقریبی را بگویی، همان‌جا بهترین گزینه را پیشنهاد می‌دهم یا درخواستت را ثبت می‌کنم."
@@ -225,7 +245,11 @@ def _build_rule_based_reply(
         lead_type = None
 
     return {
-        "intent": "unknown" if not lead_type and not suggested_tours_for_client else ("tour" if suggested_tours_for_client else "visa" if lead_type == "visa" else "unknown"),
+        "intent": "tour"
+        if (suggested_tours_for_client or (lead_type == "tour"))
+        else "visa"
+        if lead_type == "visa"
+        else "unknown",
         "reply": reply_text,
         "needs_followup": True,
         "followup_question": "مایل هستی همین الان ادامه بدهیم؟",
