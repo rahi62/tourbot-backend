@@ -1,2 +1,2 @@
-web: gunicorn tourbot_backend.wsgi --chdir backend
+web: gunicorn tourbot_backend.wsgi 
 
