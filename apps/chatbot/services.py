@@ -69,6 +69,10 @@ Rules:
 """
 
 FALLBACK_ERROR_REPLY = "متاسفم، در حال حاضر نمی‌توانم پاسخ دقیقی ارائه دهم. لطفاً بعداً دوباره تلاش کنید یا با پشتیبانی تماس بگیرید."
+RULE_BASED_REPLY_INTRO = (
+    "من ربات هوشمند توربات هستم و در حال حاضر به سرویس هوش مصنوعی متصل نیستم، "
+    "اما با توجه به اطلاعاتی که دارم این پیشنهادها می‌تواند برای شما مناسب باشد:"
+)
 
 
 def _format_price(value: Decimal) -> str:
@@ -132,6 +136,73 @@ def fetch_relevant_tours(user_message: str, limit: int = 3) -> List[Tour]:
     if not tours:
         tours = list(Tour.objects.filter(is_active=True).order_by('-created_at')[:limit])
     return tours
+
+
+def _build_rule_based_highlight(tour: Tour) -> str:
+    fragments: List[str] = []
+    if tour.duration_days:
+        fragments.append(f"{tour.duration_days} روزه")
+    price_text = _format_price(tour.price)
+    if price_text:
+        fragments.append(f"قیمت {price_text}")
+    if tour.destination:
+        fragments.append(f"مقصد {tour.destination}")
+    return " · ".join(fragments)
+
+
+def _build_rule_based_reply(
+    user_message: str,
+) -> Dict[str, Any]:
+    tours = fetch_relevant_tours(user_message, limit=3)
+    visa_knowledge_payload = fetch_visa_knowledge(user_message)
+
+    suggested_tours_for_client = []
+    for tour in tours:
+        suggested_tours_for_client.append(
+            {
+                **_serialize_tour_for_client(tour),
+                "highlight": _build_rule_based_highlight(tour),
+            }
+        )
+
+    if suggested_tours_for_client:
+        reply_parts = [RULE_BASED_REPLY_INTRO]
+        for idx, tour in enumerate(suggested_tours_for_client, start=1):
+            reply_parts.append(
+                f"{idx}. {tour['title']} ({tour['highlight']})"
+            )
+        reply_parts.append(
+            "اگر نیاز به اطلاعات بیشتری دارید یا قصد رزرو دارید، می‌توانم درخواست شما را ثبت کنم."
+        )
+        reply_text = "\n".join(reply_parts)
+        lead_type = "tour"
+    elif visa_knowledge_payload:
+        reply_text = (
+            "برای درخواست ویزا، لطفاً این موارد را در نظر بگیرید:\n"
+            + "\n".join(
+                f"- {entry['country']} ({entry.get('visa_type') or 'ویزای متداول'}): {entry['summary']}"
+                for entry in visa_knowledge_payload
+            )
+            + "\nاگر مایل باشید می‌توانم درخواست پیگیری کارشناسان ما را ثبت کنم."
+        )
+        lead_type = "visa"
+    else:
+        reply_text = (
+            "در حال حاضر داده دقیقی برای این پرسش ندارم، اما می‌توانم اطلاعات تماس شما را بگیرم "
+            "تا کارشناسان توربات با شما تماس بگیرند یا می‌توانید مقصد، تاریخ و بودجه تقریبی را اعلام کنید."
+        )
+        lead_type = None
+
+    return {
+        "intent": "unknown",
+        "reply": reply_text,
+        "needs_followup": True,
+        "followup_question": "مایل هستید درخواست شما را برای پیگیری کارشناسان ثبت کنم؟",
+        "suggested_tours": suggested_tours_for_client,
+        "required_user_info": ["تاریخ سفر", "بودجه تقریبی", "تعداد مسافران"],
+        "lead_type": lead_type,
+        "knowledge": visa_knowledge_payload,
+    }
 
 
 def _serialize_visa_knowledge(entry: VisaKnowledge) -> Dict[str, Any]:
@@ -203,31 +274,30 @@ def generate_chatbot_reply(
     conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     try:
-        messages, tours_payload, visa_knowledge_payload = _build_messages(user_message, conversation_history)
+        messages, tours_payload, visa_knowledge_payload = _build_messages(
+            user_message, conversation_history
+        )
+
+        if not getattr(settings, "OPENAI_API_KEY", None):
+            return _build_rule_based_reply(user_message)
+
         client = get_openai_client()
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             temperature=0.7,
             max_tokens=700,
+            timeout=30,
             response_format={"type": "json_object"},
         )
         content = response.choices[0].message.content or "{}"
         data = json.loads(content)
     except Exception as exc:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.error("OpenAI structured response error: %s", exc, exc_info=True)
-        return {
-            "intent": "unknown",
-            "reply": FALLBACK_ERROR_REPLY,
-            "needs_followup": False,
-            "followup_question": None,
-            "suggested_tours": [],
-            "required_user_info": [],
-            "lead_type": None,
-            "knowledge": [],
-        }
+        return _build_rule_based_reply(user_message)
 
     intent = (data.get("intent") or "unknown").lower()
     if intent not in {"tour", "visa", "unknown"}:
