@@ -1,6 +1,7 @@
 from decimal import Decimal
 from datetime import date, timedelta
 import hashlib
+import json
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -11,6 +12,8 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.http import StreamingHttpResponse
+from typing import List
 
 from .models import (
     ChatInteraction,
@@ -120,6 +123,19 @@ def _blocked_response(message: str) -> Response:
         },
         status=status.HTTP_429_TOO_MANY_REQUESTS,
     )
+
+
+def _sse_event(event_type: str, data: dict) -> str:
+    return "event: {event}\ndata: {data}\n\n".format(
+        event=event_type,
+        data=json.dumps(data, ensure_ascii=False),
+    )
+
+
+def _chunk_text(text: str, chunk_size: int = 40) -> List[str]:
+    if not text:
+        return []
+    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
 
 class IsAgencyOrAdmin(permissions.BasePermission):
@@ -440,6 +456,109 @@ def chat_endpoint(request):
         'lead_type': ai_payload.get("lead_type"),
         'knowledge': ai_payload.get("knowledge", []),
     }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def stream_chat_endpoint(request):
+    message = request.data.get('message', '').strip()
+
+    if not message:
+        return Response(
+            {'error': 'Message field is required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    identifier = _client_identifier(request)
+    limit_response = _check_and_block(request, identifier)
+    if limit_response:
+        return limit_response
+
+    user = getattr(request, "user", None)
+    authenticated = bool(getattr(user, "is_authenticated", False))
+
+    conversation_history = []
+    if authenticated:
+        recent_messages = ChatMessage.objects.filter(
+            user=request.user
+        ).order_by('-created_at')[:10]
+
+        conversation_history = [
+            {
+                'message': msg.message,
+                'response': msg.response
+            }
+            for msg in reversed(recent_messages)
+        ]
+
+    ai_payload = generate_chatbot_reply(message, conversation_history if conversation_history else None)
+    ai_reply = ai_payload.get("reply", "")
+
+    intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
+    if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
+        intent_value = ChatInteraction.INTENT_UNKNOWN
+
+    if intent_value in {ChatInteraction.INTENT_TOUR, ChatInteraction.INTENT_VISA, ChatInteraction.INTENT_LEAD}:
+        _reset_unknown_intent(identifier)
+    else:
+        blocked = _handle_unknown_intent(identifier)
+        if blocked:
+            return _blocked_response(
+                "به نظر می‌رسد گفتگو خارج از حوزه تور و ویزا است. برای ادامه، لطفاً وارد حساب شوید یا پرسش مرتبط مطرح کنید."
+            )
+
+    chat_message = None
+    if authenticated:
+        chat_message = ChatMessage.objects.create(
+            user=request.user,
+            message=message,
+            response=ai_reply
+        )
+
+        ChatInteraction.objects.create(
+            user=request.user,
+            intent=intent_value,
+            raw_query=message,
+            extracted_data={
+                "required_user_info": ai_payload.get("required_user_info"),
+                "suggested_tours": ai_payload.get("suggested_tours"),
+                "needs_followup": ai_payload.get("needs_followup"),
+                "followup_question": ai_payload.get("followup_question"),
+                "lead_type": ai_payload.get("lead_type"),
+                "knowledge": ai_payload.get("knowledge"),
+            },
+        )
+
+    _increment_usage(identifier, authenticated)
+
+    suggested_tours = ai_payload.get("suggested_tours", [])
+    required_user_info = ai_payload.get("required_user_info", [])
+    knowledge_payload = ai_payload.get("knowledge", [])
+
+    def event_stream():
+        meta_payload = {
+            "intent": intent_value,
+            "needs_followup": ai_payload.get("needs_followup", False),
+            "followup_question": ai_payload.get("followup_question"),
+            "suggested_tours": suggested_tours,
+            "required_user_info": required_user_info,
+            "lead_type": ai_payload.get("lead_type"),
+            "knowledge": knowledge_payload,
+        }
+        if chat_message:
+            meta_payload["message_id"] = chat_message.id
+
+        yield _sse_event("meta", meta_payload)
+
+        for chunk in _chunk_text(ai_reply):
+            yield _sse_event("delta", {"text": chunk})
+
+        yield _sse_event("done", {"completed": True})
+
+    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+    response['Cache-Control'] = 'no-cache'
+    response['X-Accel-Buffering'] = 'no'
+    return response
 
 
 class ChatLeadViewSet(viewsets.ModelViewSet):
