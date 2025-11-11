@@ -5,6 +5,7 @@ Environment-based configuration with development and production modes.
 
 from pathlib import Path
 from datetime import timedelta
+from urllib.parse import urlparse
 import os
 from decouple import config, Csv
 import dj_database_url
@@ -30,6 +31,8 @@ FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 # ============================================================================
 # DEVELOPMENT vs PRODUCTION SETTINGS
 # ============================================================================
+
+CSRF_TRUSTED_ORIGINS = []
 
 if DEBUG:
     # ========================================================================
@@ -98,6 +101,10 @@ if DEBUG:
             ])
         except Exception:
             pass  # If can't get IP, just use localhost origins
+
+    csrf_dev_origins = config('CSRF_TRUSTED_ORIGINS', default=None, cast=Csv())
+    if csrf_dev_origins:
+        CSRF_TRUSTED_ORIGINS = csrf_dev_origins
     
     # Logging - Verbose logging for development
     LOGGING = {
@@ -167,6 +174,16 @@ else:
         CORS_ALLOWED_ORIGINS = [FRONTEND_URL]
     else:
         raise ValueError('CORS_ALLOWED_ORIGINS or FRONTEND_URL must be set in production!')
+
+    csrf_origins = config('CSRF_TRUSTED_ORIGINS', default=None, cast=Csv())
+    if csrf_origins:
+        CSRF_TRUSTED_ORIGINS = csrf_origins
+    elif FRONTEND_URL:
+        parsed_frontend = urlparse(FRONTEND_URL)
+        if parsed_frontend.scheme and parsed_frontend.netloc:
+            CSRF_TRUSTED_ORIGINS = [f"{parsed_frontend.scheme}://{parsed_frontend.netloc}"]
+    else:
+        raise ValueError('CSRF_TRUSTED_ORIGINS or FRONTEND_URL must be set in production!')
     
     # Logging - Production logging (less verbose)
     LOGGING = {
@@ -207,6 +224,7 @@ else:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = 'DENY'
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # ============================================================================
 # APPLICATION DEFINITION
