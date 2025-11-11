@@ -220,6 +220,7 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
             extracted_data={
                 "required_user_info": ai_payload.get("required_user_info"),
                 "suggested_tours": ai_payload.get("suggested_tours"),
+                "suggested_agencies": ai_payload.get("suggested_agencies"),
                 "needs_followup": ai_payload.get("needs_followup"),
                 "followup_question": ai_payload.get("followup_question"),
                 "lead_type": ai_payload.get("lead_type"),
@@ -235,6 +236,7 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
                 "needs_followup": ai_payload.get("needs_followup", False),
                 "followup_question": ai_payload.get("followup_question"),
                 "suggested_tours": ai_payload.get("suggested_tours", []),
+                "suggested_agencies": ai_payload.get("suggested_agencies", []),
                 "required_user_info": ai_payload.get("required_user_info", []),
                 "lead_type": ai_payload.get("lead_type"),
                 "knowledge": ai_payload.get("knowledge", []),
@@ -345,6 +347,7 @@ def public_chat_endpoint(request):
                 extracted_data={
                     "required_user_info": ai_payload.get("required_user_info"),
                     "suggested_tours": ai_payload.get("suggested_tours"),
+                    "suggested_agencies": ai_payload.get("suggested_agencies"),
                     "needs_followup": ai_payload.get("needs_followup"),
                     "followup_question": ai_payload.get("followup_question"),
                     "lead_type": ai_payload.get("lead_type"),
@@ -358,6 +361,7 @@ def public_chat_endpoint(request):
             'needs_followup': ai_payload.get("needs_followup", False),
             'followup_question': ai_payload.get("followup_question"),
             'suggested_tours': ai_payload.get("suggested_tours", []),
+            'suggested_agencies': ai_payload.get("suggested_agencies", []),
             'required_user_info': ai_payload.get("required_user_info", []),
             'lead_type': ai_payload.get("lead_type"),
             'knowledge': ai_payload.get("knowledge", []),
@@ -437,6 +441,7 @@ def chat_endpoint(request):
         extracted_data={
             "required_user_info": ai_payload.get("required_user_info"),
             "suggested_tours": ai_payload.get("suggested_tours"),
+            "suggested_agencies": ai_payload.get("suggested_agencies"),
             "needs_followup": ai_payload.get("needs_followup"),
             "followup_question": ai_payload.get("followup_question"),
             "lead_type": ai_payload.get("lead_type"),
@@ -452,6 +457,7 @@ def chat_endpoint(request):
         'needs_followup': ai_payload.get("needs_followup", False),
         'followup_question': ai_payload.get("followup_question"),
         'suggested_tours': ai_payload.get("suggested_tours", []),
+        'suggested_agencies': ai_payload.get("suggested_agencies", []),
         'required_user_info': ai_payload.get("required_user_info", []),
         'lead_type': ai_payload.get("lead_type"),
         'knowledge': ai_payload.get("knowledge", []),
@@ -522,6 +528,7 @@ def stream_chat_endpoint(request):
             extracted_data={
                 "required_user_info": ai_payload.get("required_user_info"),
                 "suggested_tours": ai_payload.get("suggested_tours"),
+                "suggested_agencies": ai_payload.get("suggested_agencies"),
                 "needs_followup": ai_payload.get("needs_followup"),
                 "followup_question": ai_payload.get("followup_question"),
                 "lead_type": ai_payload.get("lead_type"),
@@ -534,6 +541,7 @@ def stream_chat_endpoint(request):
     suggested_tours = ai_payload.get("suggested_tours", [])
     required_user_info = ai_payload.get("required_user_info", [])
     knowledge_payload = ai_payload.get("knowledge", [])
+    suggested_agencies = ai_payload.get("suggested_agencies", [])
 
     def event_stream():
         meta_payload = {
@@ -541,6 +549,7 @@ def stream_chat_endpoint(request):
             "needs_followup": ai_payload.get("needs_followup", False),
             "followup_question": ai_payload.get("followup_question"),
             "suggested_tours": suggested_tours,
+            "suggested_agencies": suggested_agencies,
             "required_user_info": required_user_info,
             "lead_type": ai_payload.get("lead_type"),
             "knowledge": knowledge_payload,
