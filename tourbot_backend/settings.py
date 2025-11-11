@@ -418,3 +418,6 @@ CORS_ALLOW_HEADERS = [
 # ============================================================================
 
 OPENAI_API_KEY = config('OPENAI_API_KEY', default=None)
+print("DEBUG:", DEBUG)
+print("ALLOWED_HOSTS:", ALLOWED_HOSTS)
+print("DATABASE_URL:", os.environ.get("DATABASE_URL"))
