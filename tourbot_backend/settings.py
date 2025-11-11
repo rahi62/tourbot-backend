@@ -7,6 +7,7 @@ from pathlib import Path
 from datetime import timedelta
 from urllib.parse import urlparse
 import os
+import sys
 from decouple import config, Csv
 import dj_database_url
 import logging
@@ -33,6 +34,8 @@ FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 # ============================================================================
 
 CSRF_TRUSTED_ORIGINS = []
+
+RUNNING_COLLECTSTATIC = len(sys.argv) > 1 and sys.argv[1] == 'collectstatic'
 
 if DEBUG:
     # ========================================================================
@@ -160,11 +163,19 @@ else:
     # Database - Must use DATABASE_URL in production
     DATABASE_URL = config('DATABASE_URL', default=None)
     if not DATABASE_URL:
-        raise ValueError('DATABASE_URL must be set in production!')
-    
-    DATABASES = {
-        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)
-    }
+        if RUNNING_COLLECTSTATIC:
+            DATABASES = {
+                'default': {
+                    'ENGINE': 'django.db.backends.sqlite3',
+                    'NAME': BASE_DIR / 'collectstatic-temp-db.sqlite3',
+                }
+            }
+        else:
+            raise ValueError('DATABASE_URL must be set in production!')
+    else:
+        DATABASES = {
+            'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)
+        }
     
     # CORS - Use FRONTEND_URL or CORS_ALLOWED_ORIGINS from environment
     cors_origins = config('CORS_ALLOWED_ORIGINS', default=None, cast=Csv())
