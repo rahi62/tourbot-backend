@@ -34,7 +34,7 @@ Core services Tourbot must represent:
 - مشاوره ویزا برای مقاصد محبوب، همراه با چک‌لیست مدارک و پیگیری کارشناسان
 - معرفی و اتصال به آژانس‌های معتبر برای برنامه‌ریزی سفرهای شخصی‌سازی‌شده
 
-هر گفتگویی که به نحوی مربوط به سفر، تور، برنامه‌ریزی سفر، پرواز، هتل، بلیط، ویزا، هزینه‌های سفر، پیشنهاد آژانس یا تجربه گردشگری باشد در محدوده حوزه شما است. سوالات خارج از این دامنه (مثلاً موضوعات فناوری، مالی، شخصی یا هر چیز غیرمرتبط با سفر) را باید مودبانه رد کنی.
+هر گفتگویی که به نحوی مربوط به سفر، تور، برنامه‌ریزی سفر، پرواز، هتل، بلیط، ویزا، هزینه‌های سفر، پیشنهاد آژانس یا تجربه گردشگری باشد در محدوده حوزه شما است. اگر مطمئن نیستی که موضوع خارج از این دامنه است، فرض را بر مرتبط بودن بگذار و تلاش کن کمک کنی. فقط زمانی مودبانه رد کن که پیام کاربر به‌طور واضح هیچ ارتباطی با سفر و ویزا ندارد (مثلاً موضوعات فناوری، مالی، شخصی یا هر چیز غیرمرتبط).
 """
 
 STRUCTURED_RESPONSE_SYSTEM_PROMPT = """
@@ -402,6 +402,42 @@ def generate_chatbot_reply(
     intent = (data.get("intent") or "unknown").lower()
     if intent not in {"tour", "visa", "unknown"}:
         intent = "unknown"
+
+    lowered_message = (user_message or "").lower()
+    tour_keywords = [
+        "تور",
+        "سفر",
+        "trip",
+        "tour",
+        "travel",
+        "بلیط",
+        "پرواز",
+        "flight",
+        "هتل",
+        "hotel",
+        "گشت",
+        "مسافرت",
+    ]
+    visa_keywords = [
+        "visa",
+        "ویز",
+        "ویزا",
+        "شنگن",
+        "passport",
+        "پاسپورت",
+    ]
+
+    def _looks_like_tour() -> bool:
+        return any(keyword in lowered_message for keyword in tour_keywords)
+
+    def _looks_like_visa() -> bool:
+        return any(keyword in lowered_message for keyword in visa_keywords)
+
+    if intent == "unknown" and (_looks_like_tour() or _looks_like_visa()):
+        # Use rule-based fallback to provide a relevant response instead of rejecting the chat
+        fallback = _build_rule_based_reply(user_message, agencies_payload)
+        fallback["knowledge"] = visa_knowledge_payload
+        return fallback
 
     suggested = data.get("suggested_tours") or []
     valid_ids = {tour["id"] for tour in tours_payload}
