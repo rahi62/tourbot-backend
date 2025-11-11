@@ -1,6 +1,11 @@
 from decimal import Decimal
+from datetime import date, timedelta
+import hashlib
 
-from django.db.models import Count, Q
+from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.db.models import Avg, Count, Min, Q
+from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -35,6 +40,86 @@ from .serializers import (
 from .services import generate_chatbot_reply
 from apps.tour.models import Tour
 from apps.tour.serializers import TourSerializer
+from apps.accounts.serializers import UserProfileSerializer
+
+
+CHATBOT_LIMITS = {
+    "authenticated": {
+        "max_messages": 60,
+        "window_seconds": 24 * 60 * 60,  # daily window
+    },
+    "anonymous": {
+        "max_messages": 8,
+        "window_seconds": 24 * 60 * 60,
+    },
+}
+
+UNKNOWN_INTENT_THRESHOLD = 3
+UNKNOWN_INTENT_WINDOW = 6 * 60 * 60  # 6 hours
+BLOCK_DURATION_SECONDS = 2 * 60 * 60  # 2 hours block after repeated misuse
+
+
+def _usage_cache_key(identifier: str) -> str:
+    return f"chatbot:usage:{identifier}"
+
+
+def _unknown_intent_cache_key(identifier: str) -> str:
+    return f"chatbot:unknown:{identifier}"
+
+
+def _blocked_cache_key(identifier: str) -> str:
+    return f"chatbot:blocked:{identifier}"
+
+
+def _client_identifier(request) -> str:
+    user = getattr(request, "user", None)
+    if user and getattr(user, "is_authenticated", False):
+        base = f"user:{user.pk}"
+    else:
+        forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
+        remote_addr = forwarded_for or request.META.get("REMOTE_ADDR", "")
+        user_agent = request.META.get("HTTP_USER_AGENT", "")
+        base = f"anon:{remote_addr}:{user_agent}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def _limit_reached(identifier: str, authenticated: bool) -> bool:
+    limits = CHATBOT_LIMITS["authenticated" if authenticated else "anonymous"]
+    key = _usage_cache_key(identifier)
+    usage = cache.get(key, 0)
+    return usage >= limits["max_messages"]
+
+
+def _increment_usage(identifier: str, authenticated: bool) -> None:
+    limits = CHATBOT_LIMITS["authenticated" if authenticated else "anonymous"]
+    key = _usage_cache_key(identifier)
+    usage = cache.get(key, 0) + 1
+    cache.set(key, usage, timeout=limits["window_seconds"])
+
+
+def _handle_unknown_intent(identifier: str) -> bool:
+    key = _unknown_intent_cache_key(identifier)
+    count = cache.get(key, 0) + 1
+    cache.set(key, count, timeout=UNKNOWN_INTENT_WINDOW)
+    if count >= UNKNOWN_INTENT_THRESHOLD:
+        cache.set(_blocked_cache_key(identifier), True, timeout=BLOCK_DURATION_SECONDS)
+        return True
+    return False
+
+
+def _reset_unknown_intent(identifier: str) -> None:
+    cache.delete(_unknown_intent_cache_key(identifier))
+    cache.delete(_blocked_cache_key(identifier))
+
+
+def _blocked_response(message: str) -> Response:
+    return Response(
+        {
+            "error": "chatbot_blocked",
+            "reply": message,
+        },
+        status=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
 
 
 class IsAgencyOrAdmin(permissions.BasePermission):
@@ -65,14 +150,19 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
+        identifier = _client_identifier(request)
+        limit_response = _check_and_block(request, identifier)
+        if limit_response:
+            return limit_response
+
         user_message = serializer.validated_data['message']
-        
+
         # Get conversation history for context
         recent_messages = ChatMessage.objects.filter(
             user=request.user
         ).order_by('-created_at')[:10]
-        
+
         conversation_history = [
             {
                 'message': msg.message,
@@ -80,21 +170,32 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
             }
             for msg in reversed(recent_messages)
         ]
-        
+
         # Get AI response
         ai_payload = generate_chatbot_reply(user_message, conversation_history)
         ai_response = ai_payload.get("reply", "")
-        
+
+        intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
+        if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
+            intent_value = ChatInteraction.INTENT_UNKNOWN
+
+        if intent_value in {ChatInteraction.INTENT_TOUR, ChatInteraction.INTENT_VISA, ChatInteraction.INTENT_LEAD}:
+            _reset_unknown_intent(identifier)
+        else:
+            blocked = _handle_unknown_intent(identifier)
+            if blocked:
+                return _blocked_response(
+                    "این گفتگو خارج از حوزه تور و ویزا است. لطفاً پرسش مرتبط مطرح کنید تا ادامه دهیم."
+                )
+
+        _increment_usage(identifier, True)
+
         # Create the message with AI response
         message = ChatMessage.objects.create(
             user=request.user,
             message=user_message,
             response=ai_response
         )
-        
-        intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
-        if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
-            intent_value = ChatInteraction.INTENT_UNKNOWN
 
         ChatInteraction.objects.create(
             user=request.user,
@@ -132,75 +233,30 @@ class ChatMessageViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-@api_view(['POST'])
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def chat_endpoint(request):
+def me(request):
     """
-    Simple chat endpoint that accepts a message and returns AI response.
+    Get current user information including role.
+    Alias for profile endpoint with more RESTful naming.
     """
-    message = request.data.get('message', '').strip()
-    
-    if not message:
-        return Response(
-            {'error': 'Message is required'}, 
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    # Get conversation history for context
-    recent_messages = ChatMessage.objects.filter(
-        user=request.user
-    ).order_by('-created_at')[:10]
-    
-    conversation_history = [
-        {
-            'message': msg.message,
-            'response': msg.response
-        }
-        for msg in reversed(recent_messages)
-    ]
-    
-    # Get AI response
-    ai_payload = generate_chatbot_reply(message, conversation_history)
-    ai_response = ai_payload.get("reply", "")
-    
-    # Save the conversation
-    chat_message = ChatMessage.objects.create(
-        user=request.user,
-        message=message,
-        response=ai_response
-    )
-    
-    intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
-    if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
-        intent_value = ChatInteraction.INTENT_UNKNOWN
+    serializer = UserProfileSerializer(request.user)
+    return Response(serializer.data)
 
-    if request.user.is_authenticated:
-        ChatInteraction.objects.create(
-            user=request.user,
-            intent=intent_value,
-            raw_query=message,
-            extracted_data={
-                "required_user_info": ai_payload.get("required_user_info"),
-                "suggested_tours": ai_payload.get("suggested_tours"),
-                "needs_followup": ai_payload.get("needs_followup"),
-                "followup_question": ai_payload.get("followup_question"),
-                "lead_type": ai_payload.get("lead_type"),
-                "knowledge": ai_payload.get("knowledge"),
-            },
+
+def _check_and_block(request, identifier: str) -> Response | None:
+    user = getattr(request, "user", None)
+    authenticated = bool(getattr(user, "is_authenticated", False))
+    if cache.get(_blocked_cache_key(identifier)):
+        return _blocked_response(
+            "برای ادامه گفتگو، لطفاً درباره تور یا ویزا سوال بپرسید یا با ورود به حساب توربات ادامه دهید."
         )
 
-    return Response({
-        'message': chat_message.message,
-        'response': chat_message.response,
-        'created_at': chat_message.created_at,
-        'intent': intent_value,
-        'needs_followup': ai_payload.get("needs_followup", False),
-        'followup_question': ai_payload.get("followup_question"),
-        'suggested_tours': ai_payload.get("suggested_tours", []),
-        'required_user_info': ai_payload.get("required_user_info", []),
-        'lead_type': ai_payload.get("lead_type"),
-        'knowledge': ai_payload.get("knowledge", []),
-    }, status=status.HTTP_200_OK)
+    if _limit_reached(identifier, authenticated):
+        return _blocked_response(
+            "حداکثر تعداد پیام‌های مجاز امروز استفاده شده است. برای ادامه گفتگو، لطفاً وارد حساب خود شوید یا فردا دوباره تلاش کنید."
+        )
+    return None
 
 
 @api_view(['POST'])
@@ -212,20 +268,27 @@ def public_chat_endpoint(request):
     """
     try:
         message = request.data.get('message', '').strip()
-        
+
         if not message:
             return Response(
-                {'error': 'Message field is required'}, 
+                {'error': 'Message field is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Get conversation history if user is authenticated
+
+        identifier = _client_identifier(request)
+        limit_response = _check_and_block(request, identifier)
+        if limit_response:
+            return limit_response
+
+        user = getattr(request, "user", None)
+        authenticated = bool(getattr(user, "is_authenticated", False))
+
         conversation_history = []
-        if request.user.is_authenticated:
+        if authenticated:
             recent_messages = ChatMessage.objects.filter(
                 user=request.user
             ).order_by('-created_at')[:10]
-            
+
             conversation_history = [
                 {
                     'message': msg.message,
@@ -233,24 +296,32 @@ def public_chat_endpoint(request):
                 }
                 for msg in reversed(recent_messages)
             ]
-        
-        # Get AI response
+
         ai_payload = generate_chatbot_reply(message, conversation_history if conversation_history else None)
         ai_reply = ai_payload.get("reply", "")
-        
-        # Save the conversation if user is authenticated
-        if request.user.is_authenticated:
+
+        _increment_usage(identifier, authenticated)
+
+        intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
+        if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
+            intent_value = ChatInteraction.INTENT_UNKNOWN
+
+        if intent_value in {ChatInteraction.INTENT_TOUR, ChatInteraction.INTENT_VISA, ChatInteraction.INTENT_LEAD}:
+            _reset_unknown_intent(identifier)
+        else:
+            blocked = _handle_unknown_intent(identifier)
+            if blocked:
+                return _blocked_response(
+                    "به نظر می‌رسد گفتگو خارج از حوزه تور و ویزا است. برای ادامه، لطفاً وارد حساب شوید یا پرسش مرتبط مطرح کنید."
+                )
+
+        if authenticated:
             ChatMessage.objects.create(
                 user=request.user,
                 message=message,
                 response=ai_reply
             )
-        
-        intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
-        if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
-            intent_value = ChatInteraction.INTENT_UNKNOWN
 
-        if request.user.is_authenticated:
             ChatInteraction.objects.create(
                 user=request.user,
                 intent=intent_value,
@@ -275,16 +346,100 @@ def public_chat_endpoint(request):
             'lead_type': ai_payload.get("lead_type"),
             'knowledge': ai_payload.get("knowledge", []),
         }, status=status.HTTP_200_OK)
-        
+
     except Exception as e:
-        # Handle errors gracefully
         return Response(
             {
                 'error': 'An error occurred while processing your request',
-                'reply': "I apologize, but I'm having trouble processing your request right now. Please try again later."
+                'reply': "متاسفم، در حال حاضر نمی‌توانم درخواست را پردازش کنم. چند لحظه دیگر دوباره تلاش کنید.",
             },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def chat_endpoint(request):
+    """
+    Simple chat endpoint that accepts a message and returns AI response.
+    """
+    message = request.data.get('message', '').strip()
+
+    if not message:
+        return Response(
+            {'error': 'Message is required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    identifier = _client_identifier(request)
+    limit_response = _check_and_block(request, identifier)
+    if limit_response:
+        return limit_response
+
+    # Get conversation history for context
+    recent_messages = ChatMessage.objects.filter(
+        user=request.user
+    ).order_by('-created_at')[:10]
+
+    conversation_history = [
+        {
+            'message': msg.message,
+            'response': msg.response
+        }
+        for msg in reversed(recent_messages)
+    ]
+
+    ai_payload = generate_chatbot_reply(message, conversation_history)
+    ai_response = ai_payload.get("reply", "")
+
+    _increment_usage(identifier, True)
+
+    intent_value = ai_payload.get("intent") or ChatInteraction.INTENT_UNKNOWN
+    if intent_value not in dict(ChatInteraction.INTENT_CHOICES):
+        intent_value = ChatInteraction.INTENT_UNKNOWN
+
+    if intent_value in {ChatInteraction.INTENT_TOUR, ChatInteraction.INTENT_VISA, ChatInteraction.INTENT_LEAD}:
+        _reset_unknown_intent(identifier)
+    else:
+        blocked = _handle_unknown_intent(identifier)
+        if blocked:
+            return _blocked_response(
+                "این گفتگو خارج از حوزه تور و ویزا است. لطفاً سوال مرتبط مطرح کنید تا ادامه دهیم."
+            )
+
+    # Save the conversation
+    chat_message = ChatMessage.objects.create(
+        user=request.user,
+        message=message,
+        response=ai_response
+    )
+
+    ChatInteraction.objects.create(
+        user=request.user,
+        intent=intent_value,
+        raw_query=message,
+        extracted_data={
+            "required_user_info": ai_payload.get("required_user_info"),
+            "suggested_tours": ai_payload.get("suggested_tours"),
+            "needs_followup": ai_payload.get("needs_followup"),
+            "followup_question": ai_payload.get("followup_question"),
+            "lead_type": ai_payload.get("lead_type"),
+            "knowledge": ai_payload.get("knowledge"),
+        },
+    )
+
+    return Response({
+        'message': chat_message.message,
+        'response': chat_message.response,
+        'created_at': chat_message.created_at,
+        'intent': intent_value,
+        'needs_followup': ai_payload.get("needs_followup", False),
+        'followup_question': ai_payload.get("followup_question"),
+        'suggested_tours': ai_payload.get("suggested_tours", []),
+        'required_user_info': ai_payload.get("required_user_info", []),
+        'lead_type': ai_payload.get("lead_type"),
+        'knowledge': ai_payload.get("knowledge", []),
+    }, status=status.HTTP_200_OK)
 
 
 class ChatLeadViewSet(viewsets.ModelViewSet):
