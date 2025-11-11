@@ -33,7 +33,7 @@ FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:3000')
 # DEVELOPMENT vs PRODUCTION SETTINGS
 # ============================================================================
 
-CSRF_TRUSTED_ORIGINS = []
+CSRF_TRUSTED_ORIGINS = ['https://tourbot.vercel.app']
 
 RUNNING_COLLECTSTATIC = len(sys.argv) > 1 and sys.argv[1] == 'collectstatic'
 
@@ -81,6 +81,7 @@ if DEBUG:
         'http://127.0.0.1:3000',
         'http://localhost:3001',
         'http://127.0.0.1:3001',
+        'https://tourbot.vercel.app'
     ]
     
     # Allow all origins in development for easier mobile testing
@@ -418,6 +419,3 @@ CORS_ALLOW_HEADERS = [
 # ============================================================================
 
 OPENAI_API_KEY = config('OPENAI_API_KEY', default=None)
-print("DEBUG:", DEBUG)
-print("ALLOWED_HOSTS:", ALLOWED_HOSTS)
-print("DATABASE_URL:", os.environ.get("DATABASE_URL"))
