@@ -2,6 +2,7 @@ from decimal import Decimal
 from datetime import date, timedelta
 import hashlib
 import json
+import time
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -561,6 +562,7 @@ def stream_chat_endpoint(request):
 
         for chunk in _chunk_text(ai_reply):
             yield _sse_event("delta", {"text": chunk})
+            time.sleep(0.08)
 
         yield _sse_event("done", {"completed": True})
 
