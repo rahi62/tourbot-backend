@@ -5,9 +5,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from django.conf import settings
 from django.db.models import Q
+from django.utils import timezone
 from openai import OpenAI
 
-from apps.tour.models import Tour
+from apps.tour.models import TourPackage
 
 from .models import VisaKnowledge
 
@@ -87,31 +88,47 @@ def _format_price(value: Decimal) -> str:
     return f"{integer_value:,} تومان"
 
 
-def _serialize_tour_for_model(tour: Tour) -> Dict[str, Any]:
+def _compute_duration_days(tour: TourPackage) -> Optional[int]:
+    try:
+        if tour.start_date and tour.end_date:
+            days = (tour.end_date - tour.start_date).days
+            return max(days, 1)
+    except Exception:
+        pass
+    return None
+
+
+def _serialize_tour_for_model(tour: TourPackage) -> Dict[str, Any]:
     description = (tour.description or "").strip()
     short_description = description[:240] + ("..." if len(description) > 240 else "")
+    duration_days = _compute_duration_days(tour)
     return {
         "id": tour.id,
         "title": tour.title,
-        "destination": tour.destination,
-        "duration_days": tour.duration_days,
+        "destination": tour.destination_country,
+        "duration_days": duration_days,
         "price": float(tour.price),
         "price_text": _format_price(tour.price),
-        "travel_style": tour.travel_style,
+        "start_date": tour.start_date.isoformat() if tour.start_date else None,
+        "end_date": tour.end_date.isoformat() if tour.end_date else None,
+        "agency": (tour.user.company_name or tour.user.get_full_name()) if tour.user else None,
         "summary": short_description,
     }
 
 
-def _serialize_tour_for_client(tour: Tour) -> Dict[str, Any]:
+def _serialize_tour_for_client(tour: TourPackage) -> Dict[str, Any]:
+    duration_days = _compute_duration_days(tour)
     return {
         "id": tour.id,
         "title": tour.title,
-        "destination": tour.destination,
-        "duration_days": tour.duration_days,
+        "destination": tour.destination_country,
+        "duration_days": duration_days,
         "price": float(tour.price),
         "price_text": _format_price(tour.price),
-        "travel_style": tour.travel_style,
-        "description": tour.description[:500] if tour.description else "",
+        "start_date": tour.start_date.isoformat() if tour.start_date else None,
+        "end_date": tour.end_date.isoformat() if tour.end_date else None,
+        "agency": (tour.user.company_name or tour.user.get_full_name()) if tour.user else None,
+        "description": (tour.description or "")[:500],
     }
 
 
@@ -121,32 +138,39 @@ def _extract_keywords(text: str) -> List[str]:
     return list(keywords)[:8]
 
 
-def fetch_relevant_tours(user_message: str, limit: int = 3) -> List[Tour]:
+def fetch_relevant_tours(user_message: str, limit: int = 3) -> List[TourPackage]:
     keywords = _extract_keywords(user_message)
-    queryset = Tour.objects.filter(is_active=True)
+    today = timezone.now().date()
+    queryset = TourPackage.objects.filter(is_active=True, start_date__gte=today)
     if keywords:
         query = Q()
         for keyword in keywords:
-            query |= Q(destination__icontains=keyword)
+            query |= Q(destination_country__icontains=keyword)
             query |= Q(title__icontains=keyword)
             query |= Q(description__icontains=keyword)
         queryset = queryset.filter(query)
-    queryset = queryset.order_by('-created_at')
+    queryset = queryset.order_by("start_date")
     tours = list(queryset[:limit])
     if not tours:
-        tours = list(Tour.objects.filter(is_active=True).order_by('-created_at')[:limit])
+        fallback_queryset = TourPackage.objects.filter(is_active=True).order_by("-start_date")
+        tours = list(fallback_queryset[:limit])
     return tours
 
 
-def _build_rule_based_highlight(tour: Tour) -> str:
+def _build_rule_based_highlight(tour: TourPackage) -> str:
     fragments: List[str] = []
-    if tour.duration_days:
-        fragments.append(f"{tour.duration_days} روزه")
+    duration = _compute_duration_days(tour)
+    if duration:
+        fragments.append(f"{duration} روزه")
+    if tour.start_date:
+        fragments.append(f"حرکت {tour.start_date.strftime('%Y/%m/%d')}")
     price_text = _format_price(tour.price)
     if price_text:
         fragments.append(f"قیمت {price_text}")
-    if tour.destination:
-        fragments.append(f"مقصد {tour.destination}")
+    if tour.destination_country:
+        fragments.append(f"مقصد {tour.destination_country}")
+    if tour.user and (tour.user.company_name or tour.user.get_full_name()):
+        fragments.append(f"آژانس {tour.user.company_name or tour.user.get_full_name()}")
     return " · ".join(fragments)
 
 
@@ -322,11 +346,11 @@ def generate_chatbot_reply(
     for entry in filtered_suggestions:
         tour_id = entry.get("id")
         if tour_id in tours_map:
-            tour_obj = Tour.objects.filter(id=tour_id).first()
+            tour_obj = TourPackage.objects.filter(id=tour_id).first()
             if tour_obj:
                 suggested_tours_for_client.append({
                     **_serialize_tour_for_client(tour_obj),
-                    "highlight": entry.get("highlight") or "",
+                    "highlight": entry.get("highlight") or _build_rule_based_highlight(tour_obj),
                 })
 
     return {
